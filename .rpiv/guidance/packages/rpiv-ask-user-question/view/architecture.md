@@ -14,7 +14,7 @@ Orchestration shell above leaf widgets: composes pi-tui primitives into a height
 stateful-view.ts          — StatefulView<P> interface + ActiveView discriminant
 component-binding.ts      — globalBinding / perTabBinding factories → BoundGlobalBinding / BoundPerTabBinding
 props-adapter.ts          — QuestionnairePropsAdapter (fan-out + invalidate())
-tab-components.ts         — TabComponents per-tab bundle record
+tab-components.ts         — TabComponents per-tab bundle record (incl. the `bodyHeights(width) → {current, max}` thunk feeding the dialog's height closures)
 tab-content-strategy.ts   — TabContentStrategy + QuestionTabStrategy / SubmitTabStrategy + OneLineClippedText
 dialog-builder.ts         — DialogView class + hint/heading constants + DialogProps/DialogConfig.
                             Residual height-equalizer computed inline as `spacerRows` in `render()`.
@@ -67,11 +67,16 @@ class QuestionTabStrategy implements TabContentStrategy {
     // hint via OneLineClippedText (not Text): the collapse affordance would word-wrap and break footerRowCount=2
     footerRows(state) { return [Spacer, OneLineClippedText(hint)]; }
 }
-// SubmitTabStrategy: footerRowCount = 5; pads missing picker with Spacer rows to preserve count
+// SubmitTabStrategy: footerRowCount = 5; pads missing picker with Spacer rows to preserve count; mounts the
+// shared notes Editor in midRows for the global note (GLOBAL_NOTES_HEADER) + a committed-note review entry
+// gated on !state.notesVisible; the submit hint row adds the global-note key while the editor is closed
 ```
 
 ## DialogView Chrome Order (always)
 top `DynamicBorder` → (if `isMulti`) `tabBar` → `Spacer(1)` → strategy `headingRows` → `bodyComponent` → `Spacer(1)` → `midRows` → bottom `DynamicBorder` → `footerRows` → inline residual `spacerRows`. `maxFooterRowCount` cached at construction as `max(questionStrategy.footerRowCount, submitStrategy?.footerRowCount ?? 0)`. The footer hint interpolates the configured `collapseKey` (`DialogConfig.collapseKey`, construction-time config — not canonical state) into `HINT_PART_COLLAPSE_TEMPLATE` via `{key}`/`KEY_PLACEHOLDER` and omits the collapse part when the key is `"off"`; when `state.collapsed`, the session swaps in `COLLAPSED_HINT_TEMPLATE` interpolated the same way.
+
+## Body Row Allowance (#210)
+Before building the container, `DialogView.render` computes the rows the body may use — budget minus top chrome, rendered heading rows, the body's trailing spacer + mid rows, and bottom chrome — and hands them to the active tab's preview pane (`allotBodyRows` → `PreviewPane.setRowAllowance`; other tabs cleared). A fitted body never exceeds the allowance, so the dialog's own scroll window (shared math in `scroll-window.ts`) only engages for bodies that do not fit themselves (option lists, multi-select) or when the allowance is below `MIN_SCROLL_ROWS_WITH_PINNED_HEADING`.
 
 ## Residual Spacer (inline in `render()`)
 ```ts
@@ -80,7 +85,7 @@ const spacerRows = Math.max(0,
     this.config.getBodyHeight(width) + this.maxFooterRowCount
     - strategy.bodyHeight(width, state) - strategy.footerRowCount);
 ```
-Absorbs footer-row-count asymmetry across tabs — total dialog height equals across Question and Submit tabs without inflating natural body height. Computed inline in `DialogView.render` (no separate component); under terminal overflow it is dropped in favour of the 3-region scroll partition.
+Absorbs footer-row-count asymmetry across tabs — total dialog height equals across Question and Submit tabs without inflating natural body height. Computed inline in `DialogView.render` (no separate component); under terminal overflow it is dropped in favour of the 3-region scroll partition. In that partition the heading rows (badge + question, measured in rendered rows) join the fixed top whenever at least `MIN_SCROLL_ROWS_WITH_PINNED_HEADING` (3) body rows remain, so the question never scrolls away; below that the heading scrolls with the body.
 
 ## Architectural Boundaries
 - **Only `PropsAdapter` calls `setProps`** — `DialogView` never writes sibling props; it only reads `liveProps`
